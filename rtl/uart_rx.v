@@ -6,6 +6,8 @@
 //			BIT_RATE – UART speed
 //			PAYLOAD_BITS - UART data bits
 //			STOP_BITS - UART stop bits
+//			PARITY_ENABLE - parity bit (0 - disable, 1 - enable)
+//			PARITY_TYPE - parity type (0 - even, 1 - odd)
 //
 //		Control signals:
 //			clk – clock signal
@@ -19,16 +21,19 @@
 //		UART Status:
 //			uart_rx_valid - the received data is saved
 //			uart_rx_break - RX break
+//			uart_rx_parity_error - RX parity error
 //			start_bit_valid - start bit valid signal
 //
 //=====================================================================================
 
 module uart_rx
 #(
-	parameter BIT_RATE = 9600,
 	parameter CLK_HZ = 50_000_000,
+	parameter BIT_RATE = 9600,
 	parameter PAYLOAD_BITS = 8,
-	parameter STOP_BITS = 2
+	parameter STOP_BITS = 2,
+	parameter PARITY_ENABLE = 1,
+	parameter PARITY_TYPE = 0
 )	
 (
 	input clk,
@@ -37,6 +42,7 @@ module uart_rx
 	input uart_rx_en,
 	output uart_rx_break,
 	output uart_rx_valid,
+	output reg uart_rx_parity_error,
 	output reg [PAYLOAD_BITS - 1:0] uart_rx_data,
 	output start_bit_valid
 );
@@ -54,7 +60,7 @@ reg [PAYLOAD_BITS - 1:0] recieved_data; // Data register
 reg [COUNT_REG_WIDTH - 1:0] cycle_counter; // Data bit clock counter
 reg [BIT_COUNT_WIDTH:0] bit_counter; // Received bits counter
 reg bit_sample; // Register for sampling in the middle of the bit
-reg [1:0] cstate, nstate; // Current and next FSM state
+reg [2:0] cstate, nstate; // Current and next FSM state
 
 //=====================================================================================
 // FSM States
@@ -62,7 +68,8 @@ reg [1:0] cstate, nstate; // Current and next FSM state
 localparam IDLE = 0; // Idle state
 localparam START = 1; // Start RX state
 localparam RECV = 2; // Data receiving state
-localparam STOP = 3; // Stop RX state
+localparam PARITY = 3; // Parity state
+localparam STOP = 4; // Stop RX state
 
 //=====================================================================================
 // break and valid generation
@@ -125,7 +132,8 @@ always @ (*) begin : p_n_fsm_state
 	case (cstate)
 		IDLE : nstate = rxd_reg ? IDLE : START;
 		START : nstate = cycle_counter == CYCLES_PER_BIT/2 && !start_bit_valid ? IDLE : next_bit ? RECV : START;
-		RECV : nstate = payload_done ? STOP : RECV;
+		RECV : nstate = payload_done ? (PARITY_ENABLE ? PARITY : STOP) : RECV;
+		PARITY : nstate = next_bit ? STOP : PARITY;
 		STOP : nstate = next_bit ? IDLE : STOP;
 		default : nstate = IDLE;
 	endcase
@@ -147,6 +155,21 @@ always @ (posedge clk, negedge rst_n) begin : p_recieved_data
 		for (i = PAYLOAD_BITS - 2; i >= 0; i = i - 1) begin
 			recieved_data[i] <= recieved_data[i + 1];
 		end
+	end
+end
+
+//=====================================================================================
+// Parity check
+//=====================================================================================
+always @ (posedge clk, negedge rst_n) begin
+	if (!rst_n) begin
+		uart_rx_parity_error <= 1'b0;
+	end
+	else if (cstate == IDLE) begin
+		uart_rx_parity_error <= 1'b0;
+	end
+	else if (cstate == PARITY && next_bit) begin
+		uart_rx_parity_error <= (bit_sample != ((PARITY_TYPE == 0) ? ^recieved_data : ~^recieved_data));
 	end
 end
 
@@ -187,7 +210,7 @@ always @ (posedge clk, negedge rst_n) begin : p_cycle_counter
 	else if (next_bit) begin
 		cycle_counter <= {COUNT_REG_WIDTH{1'b0}};
 	end
-	else if (cstate == START || cstate == RECV || cstate == STOP) begin
+	else if (cstate == START || cstate == RECV || cstate == PARITY || cstate == STOP) begin
 		cycle_counter <= cycle_counter + 1'b1;
 	end
 end

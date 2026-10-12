@@ -6,6 +6,8 @@
 //			BIT_RATE – UART speed
 //			PAYLOAD_BITS - UART data bits
 //			STOP_BITS - UART stop bits
+//			PARITY_ENABLE - parity bit (0 - disable, 1 - enable)
+//			PARITY_TYPE - parity type (0 - even, 1 - odd)
 //
 //		Control signals:
 //			clk – clock signal
@@ -23,10 +25,12 @@
 
 module uart_tx
 #(
-	parameter BIT_RATE = 9600,
 	parameter CLK_HZ = 50_000_000,
+	parameter BIT_RATE = 9600,
 	parameter PAYLOAD_BITS = 8,
-	parameter STOP_BITS = 2
+	parameter STOP_BITS = 2,
+	parameter PARITY_ENABLE = 1,
+	parameter PARITY_TYPE = 0
 )
 (
 	input clk,
@@ -48,7 +52,8 @@ reg txd_reg; // TX bit register
 reg [PAYLOAD_BITS - 1:0] data_to_send; // Transmitted data register
 reg [COUNT_REG_WIDTH - 1:0] cycle_counter; // Data bit clock counter
 reg [BIT_COUNT_WIDTH:0] bit_counter; // Received bits counter
-reg [1:0] cstate, nstate; // Current and next FSM state
+reg tx_parity_bit; // TX parity bit
+reg [2:0] cstate, nstate; // Current and next FSM state
 
 //=====================================================================================
 // FSM States
@@ -56,7 +61,8 @@ reg [1:0] cstate, nstate; // Current and next FSM state
 localparam IDLE = 0; // Idle state
 localparam START = 1; // Start TX state
 localparam SEND = 2; // Data transmitting state
-localparam STOP = 3; // Stop TX state
+localparam PARITY = 3; // Parity state
+localparam STOP = 4; // Stop TX state
 
 //=====================================================================================
 // TX busy and output TX signal generation
@@ -90,7 +96,8 @@ always @ (*) begin : p_n_fsm_state
 	case (cstate)
 		IDLE : nstate = uart_tx_en ? START : IDLE;
 		START : nstate = next_bit ? SEND : START;
-		SEND : nstate = payload_done ? STOP : SEND;
+		SEND : nstate = payload_done ? (PARITY_ENABLE ? PARITY : STOP) : SEND;
+		PARITY : nstate = next_bit ? STOP : PARITY;
 		STOP : nstate = stop_done ? IDLE : STOP;
 		default : nstate = IDLE;
 	endcase
@@ -103,9 +110,11 @@ integer i = 0;
 always @ (posedge clk, negedge rst_n) begin : p_data_to_send
 	if (!rst_n) begin
 		data_to_send <= {PAYLOAD_BITS{1'b0}};
+		tx_parity_bit <= 1'b0;
 	end
 	else if (cstate == IDLE && uart_tx_en) begin
 		data_to_send <= uart_tx_data;
+		tx_parity_bit <= (PARITY_TYPE == 0) ? ^uart_tx_data : ~^uart_tx_data;
 	end
 	else if (cstate == SEND && next_bit) begin
 		for (i = PAYLOAD_BITS - 2; i >= 0; i = i - 1) begin
@@ -124,13 +133,10 @@ always @ (posedge clk, negedge rst_n) begin : p_bit_counter
 	else if (cstate != SEND && cstate != STOP) begin
 		bit_counter <= 4'b0;
 	end
-	else if (cstate == SEND && nstate == STOP) begin
-		bit_counter <= 4'b0;
+	else if (cstate == SEND && next_bit) begin
+		bit_counter <= payload_done ? 4'b0 : bit_counter + 1'b1;
 	end
 	else if (cstate == STOP && next_bit) begin
-		bit_counter <= bit_counter + 1'b1;
-	end
-	else if (cstate == SEND && next_bit) begin
 		bit_counter <= bit_counter + 1'b1;
 	end
 end
@@ -145,7 +151,7 @@ always @ (posedge clk, negedge rst_n) begin : p_cycle_counter
 	else if (next_bit) begin
 		cycle_counter <= {COUNT_REG_WIDTH{1'b0}};
 	end
-	else if (cstate == START || cstate == SEND || cstate == STOP) begin
+	else if (cstate == START || cstate == SEND || cstate == PARITY || cstate == STOP) begin
 		cycle_counter <= cycle_counter + 1'b1;
 	end
 end
@@ -165,6 +171,9 @@ always @ (posedge clk, negedge rst_n) begin : p_txd_reg
 	end
 	else if (cstate == SEND) begin
 		txd_reg <= data_to_send[0];
+	end
+	else if (cstate == PARITY) begin
+		txd_reg <= tx_parity_bit;
 	end
 	else if (cstate == STOP) begin
 		txd_reg <= 1'b1;
