@@ -44,22 +44,22 @@ UART Frame Structure:
 
 The bit period $T_{bit}$ is determined by the configured Baud rate:
 
-$$T_{bit} = \frac{1}{\text{BIT\_RATE}}$$
+$$T_{bit} = \frac{1}{\mathrm{BIT\_RATE}}$$
 
 The number of clock cycles per single bit period $N_{cycles}$ for system clock frequency $f_{clk}$ is calculated as:
 
-$$N_{cycles} = \left\lfloor \frac{f_{clk}}{\text{BIT\_RATE}} \right\rfloor$$
+$$N_{cycles} = \left\lfloor \frac{f_{clk}}{\mathrm{BIT\_RATE}} \right\rfloor$$
 
 To sample data reliably, the receiver counts $\frac{N_{cycles}}{2}$ from the detected falling edge of the start bit and samples the incoming data line precisely at the midpoint of each bit cell.
 
 The parity bit $P$ for data payload $D = [D_{N - 1}, \dots, D_0]$ is computed as follows:
 + **Even Parity**: ensures the total count of logic `1`s in the frame is even:
 
-    $$P_{even} = D_0 \oplus D_1 \oplus \dots \oplus D_{N - 1} = \bigoplus_{i = 0}^{N - 1} D_i$$
+$$P_{even} = D_0 \oplus D_1 \oplus \dots \oplus D_{N - 1} = \bigoplus_{i = 0}^{N - 1} D_i$$
 
 + **Odd Parity**: ensures the total count of logic `1`s in the frame is odd:
 
-    $$P_{odd} = \sim \left(\bigoplus_{i = 0}^{N - 1} D_i \right)$$
+$$P_{odd} = \sim \left(\bigoplus_{i = 0}^{N - 1} D_i \right)$$
 
 Upon reception, the computed parity value is evaluated against the incoming parity bit. Any mismatch triggers the parity error flag.
 
